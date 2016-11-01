@@ -177,6 +177,7 @@ type HostInterface interface {
 	ImagesFsInfo() (cadvisorapiv2.FsInfo, error)
 	RootFsInfo() (cadvisorapiv2.FsInfo, error)
 	ListVolumesForPod(podUID types.UID) (map[string]volume.Volume, bool)
+	GetVolumesMetricsForPod(podUID types.UID) (map[string]*volume.Metrics, bool)
 	PLEGHealthCheck() (bool, error)
 }
 
