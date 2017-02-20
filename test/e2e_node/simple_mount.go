@@ -17,7 +17,7 @@ limitations under the License.
 package e2e_node
 
 import (
-	"k8s.io/kubernetes/pkg/api/unversioned"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
 
@@ -31,11 +31,11 @@ var _ = framework.KubeDescribe("SimpleMount", func() {
 	// If the mount fails, the pod will not be able to run, and CreateSync will timeout.
 	It("should be able to mount an emptydir on a container", func() {
 		pod := &v1.Pod{
-			TypeMeta: unversioned.TypeMeta{
+			TypeMeta: metav1.TypeMeta{
 				Kind:       "Pod",
 				APIVersion: "v1",
 			},
-			ObjectMeta: v1.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name: "simple-mount-pod",
 			},
 			Spec: v1.PodSpec{

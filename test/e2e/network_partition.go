@@ -21,15 +21,16 @@ import (
 	"strings"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/client/cache"
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
-	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/labels"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util/wait"
-	"k8s.io/kubernetes/pkg/watch"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/clientset"
 	"k8s.io/kubernetes/test/e2e/framework"
 	testutils "k8s.io/kubernetes/test/utils"
 
@@ -92,7 +93,7 @@ func expectNodeReadiness(isReady bool, newNode chan *v1.Node) {
 
 func podOnNode(podName, nodeName string, image string) *v1.Pod {
 	return &v1.Pod{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: podName,
 			Labels: map[string]string{
 				"name": podName,
@@ -159,16 +160,16 @@ var _ = framework.KubeDescribe("Network Partition [Disruptive] [Slow]", func() {
 			It("All pods on the unreachable node should be marked as NotReady upon the node turn NotReady "+
 				"AND all pods should be mark back to Ready when the node get back to Ready before pod eviction timeout", func() {
 				By("choose a node - we will block all network traffic on this node")
-				var podOpts v1.ListOptions
-				nodeOpts := v1.ListOptions{}
+				var podOpts metav1.ListOptions
+				nodeOpts := metav1.ListOptions{}
 				nodes, err := c.Core().Nodes().List(nodeOpts)
 				Expect(err).NotTo(HaveOccurred())
 				framework.FilterNodes(nodes, func(node v1.Node) bool {
 					if !framework.IsNodeConditionSetAsExpected(&node, v1.NodeReady, true) {
 						return false
 					}
-					podOpts = v1.ListOptions{FieldSelector: fields.OneTermEqualSelector(api.PodHostField, node.Name).String()}
-					pods, err := c.Core().Pods(v1.NamespaceAll).List(podOpts)
+					podOpts = metav1.ListOptions{FieldSelector: fields.OneTermEqualSelector(api.PodHostField, node.Name).String()}
+					pods, err := c.Core().Pods(metav1.NamespaceAll).List(podOpts)
 					if err != nil || len(pods.Items) <= 0 {
 						return false
 					}
@@ -178,7 +179,7 @@ var _ = framework.KubeDescribe("Network Partition [Disruptive] [Slow]", func() {
 					framework.Failf("No eligible node were found: %d", len(nodes.Items))
 				}
 				node := nodes.Items[0]
-				podOpts = v1.ListOptions{FieldSelector: fields.OneTermEqualSelector(api.PodHostField, node.Name).String()}
+				podOpts = metav1.ListOptions{FieldSelector: fields.OneTermEqualSelector(api.PodHostField, node.Name).String()}
 				if err = framework.WaitForMatchPodsCondition(c, podOpts, "Running and Ready", podReadyTimeout, testutils.PodRunningReady); err != nil {
 					framework.Failf("Pods on node %s are not ready and running within %v: %v", node.Name, podReadyTimeout, err)
 				}
@@ -187,15 +188,15 @@ var _ = framework.KubeDescribe("Network Partition [Disruptive] [Slow]", func() {
 				nodeSelector := fields.OneTermEqualSelector("metadata.name", node.Name)
 				stopCh := make(chan struct{})
 				newNode := make(chan *v1.Node)
-				var controller *cache.Controller
+				var controller cache.Controller
 				_, controller = cache.NewInformer(
 					&cache.ListWatch{
-						ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
+						ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
 							options.FieldSelector = nodeSelector.String()
 							obj, err := f.ClientSet.Core().Nodes().List(options)
 							return runtime.Object(obj), err
 						},
-						WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
+						WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 							options.FieldSelector = nodeSelector.String()
 							return f.ClientSet.Core().Nodes().Watch(options)
 						},
@@ -263,12 +264,12 @@ var _ = framework.KubeDescribe("Network Partition [Disruptive] [Slow]", func() {
 
 			By("choose a node with at least one pod - we will block some network traffic on this node")
 			label := labels.SelectorFromSet(labels.Set(map[string]string{"name": name}))
-			options := v1.ListOptions{LabelSelector: label.String()}
+			options := metav1.ListOptions{LabelSelector: label.String()}
 			pods, err := c.Core().Pods(ns).List(options) // list pods after all have been scheduled
 			Expect(err).NotTo(HaveOccurred())
 			nodeName := pods.Items[0].Spec.NodeName
 
-			node, err := c.Core().Nodes().Get(nodeName)
+			node, err := c.Core().Nodes().Get(nodeName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			// This creates a temporary network partition, verifies that 'podNameToDisappear',
@@ -306,7 +307,7 @@ var _ = framework.KubeDescribe("Network Partition [Disruptive] [Slow]", func() {
 
 			// verify that it is really on the requested node
 			{
-				pod, err := c.Core().Pods(ns).Get(additionalPod)
+				pod, err := c.Core().Pods(ns).Get(additionalPod, metav1.GetOptions{})
 				Expect(err).NotTo(HaveOccurred())
 				if pod.Spec.NodeName != node.Name {
 					framework.Logf("Pod %s found on invalid node: %s instead of %s", pod.Name, pod.Spec.NodeName, node.Name)
@@ -328,12 +329,12 @@ var _ = framework.KubeDescribe("Network Partition [Disruptive] [Slow]", func() {
 
 			By("choose a node with at least one pod - we will block some network traffic on this node")
 			label := labels.SelectorFromSet(labels.Set(map[string]string{"name": name}))
-			options := v1.ListOptions{LabelSelector: label.String()}
+			options := metav1.ListOptions{LabelSelector: label.String()}
 			pods, err := c.Core().Pods(ns).List(options) // list pods after all have been scheduled
 			Expect(err).NotTo(HaveOccurred())
 			nodeName := pods.Items[0].Spec.NodeName
 
-			node, err := c.Core().Nodes().Get(nodeName)
+			node, err := c.Core().Nodes().Get(nodeName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			// This creates a temporary network partition, verifies that 'podNameToDisappear',
@@ -360,7 +361,7 @@ var _ = framework.KubeDescribe("Network Partition [Disruptive] [Slow]", func() {
 	})
 
 	framework.KubeDescribe("[StatefulSet]", func() {
-		psName := "pet"
+		psName := "ss"
 		labels := map[string]string{
 			"foo": "bar",
 		}
@@ -368,7 +369,6 @@ var _ = framework.KubeDescribe("Network Partition [Disruptive] [Slow]", func() {
 
 		BeforeEach(func() {
 			framework.SkipUnlessProviderIs("gce", "gke")
-			framework.SkipIfMissingResource(f.ClientPool, StatefulSetGroupVersionResource, f.Namespace.Name)
 			By("creating service " + headlessSvcName + " in namespace " + f.Namespace.Name)
 			headlessService := createServiceSpec(headlessSvcName, "", true, labels)
 			_, err := f.ClientSet.Core().Services(f.Namespace.Name).Create(headlessService)
@@ -381,18 +381,18 @@ var _ = framework.KubeDescribe("Network Partition [Disruptive] [Slow]", func() {
 			if CurrentGinkgoTestDescription().Failed {
 				dumpDebugInfo(c, ns)
 			}
-			framework.Logf("Deleting all petset in ns %v", ns)
-			deleteAllStatefulSets(c, ns)
+			framework.Logf("Deleting all stateful set in ns %v", ns)
+			framework.DeleteAllStatefulSets(c, ns)
 		})
 
 		It("should come back up if node goes down [Slow] [Disruptive]", func() {
 			petMounts := []v1.VolumeMount{{Name: "datadir", MountPath: "/data/"}}
 			podMounts := []v1.VolumeMount{{Name: "home", MountPath: "/home"}}
-			ps := newStatefulSet(psName, ns, headlessSvcName, 3, petMounts, podMounts, labels)
+			ps := framework.NewStatefulSet(psName, ns, headlessSvcName, 3, petMounts, podMounts, labels)
 			_, err := c.Apps().StatefulSets(ns).Create(ps)
 			Expect(err).NotTo(HaveOccurred())
 
-			pst := statefulSetTester{c: c}
+			pst := framework.NewStatefulSetTester(c)
 
 			nn := framework.TestContext.CloudConfig.NumNodes
 			nodeNames, err := framework.CheckNodesReady(f.ClientSet, framework.NodeReadyInitialTimeout, nn)
@@ -400,27 +400,27 @@ var _ = framework.KubeDescribe("Network Partition [Disruptive] [Slow]", func() {
 			restartNodes(f, nodeNames)
 
 			By("waiting for pods to be running again")
-			pst.waitForRunningAndReady(*ps.Spec.Replicas, ps)
+			pst.WaitForRunningAndReady(*ps.Spec.Replicas, ps)
 		})
 
-		It("should not reschedule pets if there is a network partition [Slow] [Disruptive]", func() {
-			ps := newStatefulSet(psName, ns, headlessSvcName, 3, []v1.VolumeMount{}, []v1.VolumeMount{}, labels)
+		It("should not reschedule stateful pods if there is a network partition [Slow] [Disruptive]", func() {
+			ps := framework.NewStatefulSet(psName, ns, headlessSvcName, 3, []v1.VolumeMount{}, []v1.VolumeMount{}, labels)
 			_, err := c.Apps().StatefulSets(ns).Create(ps)
 			Expect(err).NotTo(HaveOccurred())
 
-			pst := statefulSetTester{c: c}
-			pst.waitForRunningAndReady(*ps.Spec.Replicas, ps)
+			pst := framework.NewStatefulSetTester(c)
+			pst.WaitForRunningAndReady(*ps.Spec.Replicas, ps)
 
-			pod := pst.getPodList(ps).Items[0]
-			node, err := c.Core().Nodes().Get(pod.Spec.NodeName)
+			pod := pst.GetPodList(ps).Items[0]
+			node, err := c.Core().Nodes().Get(pod.Spec.NodeName, metav1.GetOptions{})
 			framework.ExpectNoError(err)
 
 			// Blocks outgoing network traffic on 'node'. Then verifies that 'podNameToDisappear',
-			// that belongs to StatefulSet 'petSetName', **does not** disappear due to forced deletion from the apiserver.
-			// The grace period on the petset pods is set to a value > 0.
+			// that belongs to StatefulSet 'statefulSetName', **does not** disappear due to forced deletion from the apiserver.
+			// The grace period on the stateful pods is set to a value > 0.
 			testUnderTemporaryNetworkFailure(c, ns, node, func() {
-				framework.Logf("Checking that the NodeController does not force delete pet %v", pod.Name)
-				err := framework.WaitTimeoutForPodNoLongerRunningInNamespace(c, pod.Name, ns, pod.ResourceVersion, 10*time.Minute)
+				framework.Logf("Checking that the NodeController does not force delete stateful pods %v", pod.Name)
+				err := framework.WaitTimeoutForPodNoLongerRunningInNamespace(c, pod.Name, ns, 10*time.Minute)
 				Expect(err).To(Equal(wait.ErrWaitTimeout), "Pod was not deleted during network partition.")
 			})
 
@@ -430,7 +430,7 @@ var _ = framework.KubeDescribe("Network Partition [Disruptive] [Slow]", func() {
 			}
 
 			By("waiting for pods to be running again")
-			pst.waitForRunningAndReady(*ps.Spec.Replicas, ps)
+			pst.WaitForRunningAndReady(*ps.Spec.Replicas, ps)
 		})
 	})
 
@@ -449,12 +449,12 @@ var _ = framework.KubeDescribe("Network Partition [Disruptive] [Slow]", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("choose a node with at least one pod - we will block some network traffic on this node")
-			options := v1.ListOptions{LabelSelector: label.String()}
+			options := metav1.ListOptions{LabelSelector: label.String()}
 			pods, err := c.Core().Pods(ns).List(options) // list pods after all have been scheduled
 			Expect(err).NotTo(HaveOccurred())
 			nodeName := pods.Items[0].Spec.NodeName
 
-			node, err := c.Core().Nodes().Get(nodeName)
+			node, err := c.Core().Nodes().Get(nodeName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			// This creates a temporary network partition, verifies that the job has 'parallelism' number of

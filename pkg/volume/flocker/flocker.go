@@ -23,14 +23,15 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/types"
 	"k8s.io/kubernetes/pkg/util/env"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/util/strings"
 	"k8s.io/kubernetes/pkg/volume"
 
-	flockerApi "github.com/clusterhq/flocker-go"
+	flockerapi "github.com/clusterhq/flocker-go"
+	"k8s.io/kubernetes/pkg/volume/util"
 )
 
 // This is the primary entrypoint for volume plugins.
@@ -50,7 +51,7 @@ type flockerVolume struct {
 	// dataset uuid
 	datasetUUID string
 	//pod           *v1.Pod
-	flockerClient flockerApi.Clientable
+	flockerClient flockerapi.Clientable
 	manager       volumeManager
 	plugin        *flockerPlugin
 	mounter       mount.Interface
@@ -229,7 +230,7 @@ func (b *flockerVolumeMounter) SetUp(fsGroup *int64) error {
 
 // newFlockerClient uses environment variables and pod attributes to return a
 // flocker client capable of talking with the Flocker control service.
-func (p *flockerPlugin) newFlockerClient(hostIP string) (*flockerApi.Client, error) {
+func (p *flockerPlugin) newFlockerClient(hostIP string) (*flockerapi.Client, error) {
 	host := env.GetEnvAsStringOrFallback("FLOCKER_CONTROL_SERVICE_HOST", defaultHost)
 	port, err := env.GetEnvAsIntOrFallback("FLOCKER_CONTROL_SERVICE_PORT", defaultPort)
 
@@ -240,11 +241,11 @@ func (p *flockerPlugin) newFlockerClient(hostIP string) (*flockerApi.Client, err
 	keyPath := env.GetEnvAsStringOrFallback("FLOCKER_CONTROL_SERVICE_CLIENT_KEY_FILE", defaultClientKeyFile)
 	certPath := env.GetEnvAsStringOrFallback("FLOCKER_CONTROL_SERVICE_CLIENT_CERT_FILE", defaultClientCertFile)
 
-	c, err := flockerApi.NewClient(host, port, hostIP, caCertPath, keyPath, certPath)
+	c, err := flockerapi.NewClient(host, port, hostIP, caCertPath, keyPath, certPath)
 	return c, err
 }
 
-func (b *flockerVolumeMounter) newFlockerClient() (*flockerApi.Client, error) {
+func (b *flockerVolumeMounter) newFlockerClient() (*flockerapi.Client, error) {
 
 	hostIP, err := b.plugin.host.GetHostIP()
 	if err != nil {
@@ -421,25 +422,7 @@ func (c *flockerVolumeUnmounter) TearDown() error {
 
 // TearDownAt unmounts the bind mount
 func (c *flockerVolumeUnmounter) TearDownAt(dir string) error {
-	notMnt, err := c.mounter.IsLikelyNotMountPoint(dir)
-	if err != nil {
-		return err
-	}
-	if notMnt {
-		return os.Remove(dir)
-	}
-	if err := c.mounter.Unmount(dir); err != nil {
-		return err
-	}
-	notMnt, mntErr := c.mounter.IsLikelyNotMountPoint(dir)
-	if mntErr != nil {
-		glog.Errorf("isLikelyNotMountPoint check failed: %v", mntErr)
-		return err
-	}
-	if notMnt {
-		return os.Remove(dir)
-	}
-	return fmt.Errorf("Failed to unmount volume dir")
+	return util.UnmountPath(dir, c.mounter)
 }
 
 func (plugin *flockerPlugin) NewDeleter(spec *volume.Spec) (volume.Deleter, error) {

@@ -17,11 +17,22 @@ limitations under the License.
 package api
 
 import (
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/runtime/schema"
-	"k8s.io/kubernetes/pkg/runtime/serializer"
+	"os"
+
+	"k8s.io/apimachinery/pkg/apimachinery/announced"
+	"k8s.io/apimachinery/pkg/apimachinery/registered"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 )
+
+// GroupFactoryRegistry is the APIGroupFactoryRegistry (overlaps a bit with Registry, see comments in package for details)
+var GroupFactoryRegistry = make(announced.APIGroupFactoryRegistry)
+
+// Registry is an instance of an API registry.  This is an interim step to start removing the idea of a global
+// API registry.
+var Registry = registered.NewOrDie(os.Getenv("KUBE_API_VERSIONS"))
 
 // Scheme is the default instance of runtime.Scheme to which types in the Kubernetes API are already registered.
 // NOTE: If you are copying this file to start a new api group, STOP! Copy the
@@ -61,22 +72,8 @@ var (
 	AddToScheme   = SchemeBuilder.AddToScheme
 )
 
-func init() {
-	// TODO(lavalamp): move this call to scheme builder above.  Can't
-	// remove it from here because lots of people inappropriately rely on it
-	// (specifically the unversioned time conversion). Can't have it in
-	// both places because then it gets double registered.  Consequence of
-	// current state is that it only ever gets registered in the main
-	// api.Scheme, even though everyone that uses anything from unversioned
-	// needs these.
-	if err := addConversionFuncs(Scheme); err != nil {
-		// Programmer error.
-		panic(err)
-	}
-}
-
 func addKnownTypes(scheme *runtime.Scheme) error {
-	if err := scheme.AddIgnoredConversionType(&unversioned.TypeMeta{}, &unversioned.TypeMeta{}); err != nil {
+	if err := scheme.AddIgnoredConversionType(&metav1.TypeMeta{}, &metav1.TypeMeta{}); err != nil {
 		return err
 	}
 	scheme.AddKnownTypes(SchemeGroupVersion,
@@ -113,11 +110,10 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&PersistentVolumeList{},
 		&PersistentVolumeClaim{},
 		&PersistentVolumeClaimList{},
-		&DeleteOptions{},
-		&ListOptions{},
 		&PodAttachOptions{},
 		&PodLogOptions{},
 		&PodExecOptions{},
+		&PodPortForwardOptions{},
 		&PodProxyOptions{},
 		&ComponentStatus{},
 		&ComponentStatusList{},
@@ -129,12 +125,11 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 
 	// Register Unversioned types under their own special group
 	scheme.AddUnversionedTypes(Unversioned,
-		&unversioned.ExportOptions{},
-		&unversioned.Status{},
-		&unversioned.APIVersions{},
-		&unversioned.APIGroupList{},
-		&unversioned.APIGroup{},
-		&unversioned.APIResourceList{},
+		&metav1.Status{},
+		&metav1.APIVersions{},
+		&metav1.APIGroupList{},
+		&metav1.APIGroup{},
+		&metav1.APIResourceList{},
 	)
 	return nil
 }

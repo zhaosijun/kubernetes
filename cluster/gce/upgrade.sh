@@ -33,13 +33,13 @@ source "${KUBE_ROOT}/cluster/kube-util.sh"
 function usage() {
   echo "!!! EXPERIMENTAL !!!"
   echo ""
-  echo "${0} [-M|-N|-P] -l -o | <version number or publication>"
+  echo "${0} [-M | -N | -P] [-o] (-l | <version number or publication>)"
   echo "  Upgrades master and nodes by default"
   echo "  -M:  Upgrade master only"
   echo "  -N:  Upgrade nodes only"
   echo "  -P:  Node upgrade prerequisites only (create a new instance template)"
   echo "  -o:  Use os distro sepcified in KUBE_NODE_OS_DISTRIBUTION for new nodes. Options include 'debian' or 'gci'"
-  echo "  -l:  Use local(dev) binaries"
+  echo "  -l:  Use local(dev) binaries. This is only supported for master upgrades."
   echo ""
   echo '  Version number or publication is either a proper version number'
   echo '  (e.g. "v1.0.6", "v1.2.0-alpha.1.881+376438b69c7612") or a version'
@@ -172,6 +172,7 @@ function get-node-os() {
 # Vars set:
 #   KUBELET_TOKEN
 #   KUBE_PROXY_TOKEN
+#   NODE_PROBLEM_DETECTOR_TOKEN
 #   CA_CERT_BASE64
 #   EXTRA_DOCKER_OPTS
 #   KUBELET_CERT_BASE64
@@ -206,6 +207,7 @@ fi
 #   INSTANCE_GROUPS
 #   KUBELET_TOKEN
 #   KUBE_PROXY_TOKEN
+#   NODE_PROBLEM_DETECTOR_TOKEN
 #   CA_CERT_BASE64
 #   EXTRA_DOCKER_OPTS
 #   KUBELET_CERT_BASE64
@@ -228,6 +230,7 @@ function prepare-node-upgrade() {
   local node_env=$(get-node-env)
   KUBELET_TOKEN=$(get-env-val "${node_env}" "KUBELET_TOKEN")
   KUBE_PROXY_TOKEN=$(get-env-val "${node_env}" "KUBE_PROXY_TOKEN")
+  NODE_PROBLEM_DETECTOR_TOKEN=$(get-env-val "${node_env}" "NODE_PROBLEM_DETECTOR_TOKEN")
   CA_CERT_BASE64=$(get-env-val "${node_env}" "CA_CERT")
   EXTRA_DOCKER_OPTS=$(get-env-val "${node_env}" "EXTRA_DOCKER_OPTS")
   KUBELET_CERT_BASE64=$(get-env-val "${node_env}" "KUBELET_CERT")
@@ -357,6 +360,12 @@ while getopts ":MNPlho" opt; do
   esac
 done
 shift $((OPTIND-1))
+
+if [[ $# -gt 1 ]]; then
+  echo "Error: Only one parameter (<version number or publication>) may be passed after the set of flags!" >&2
+  usage
+  exit 1
+fi
 
 if [[ $# -lt 1 ]] && [[ "${local_binaries}" == "false" ]]; then
   usage

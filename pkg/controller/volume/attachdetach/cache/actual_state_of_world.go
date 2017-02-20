@@ -28,8 +28,8 @@ import (
 
 	"github.com/golang/glog"
 
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/types"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util/operationexecutor"
 	"k8s.io/kubernetes/pkg/volume/util/volumehelper"
@@ -116,6 +116,9 @@ type ActualStateOfWorld interface {
 	// since volumes should be removed from this list as soon a detach operation
 	// is considered, before the detach operation is triggered).
 	GetVolumesToReportAttached() map[types.NodeName][]v1.AttachedVolume
+
+	// GetNodesToUpdateStatusFor returns the map of nodeNames to nodeToUpdateStatusFor
+	GetNodesToUpdateStatusFor() map[types.NodeName]nodeToUpdateStatusFor
 }
 
 // AttachedVolume represents a volume that is attached to a node.
@@ -449,24 +452,28 @@ func (asw *actualStateOfWorld) addVolumeToReportAsAttached(
 // needs to be updated again by the node status updater.
 // If the specifed node does not exist in the nodesToUpdateStatusFor list, log the error and return
 // This is an internal function and caller should acquire and release the lock
-func (asw *actualStateOfWorld) updateNodeStatusUpdateNeeded(nodeName types.NodeName, needed bool) {
+func (asw *actualStateOfWorld) updateNodeStatusUpdateNeeded(nodeName types.NodeName, needed bool) error {
 	nodeToUpdate, nodeToUpdateExists := asw.nodesToUpdateStatusFor[nodeName]
 	if !nodeToUpdateExists {
 		// should not happen
-		glog.Errorf(
-			"Failed to set statusUpdateNeeded to needed %t because nodeName=%q  does not exist",
-			needed,
-			nodeName)
+		errMsg := fmt.Sprintf("Failed to set statusUpdateNeeded to needed %t because nodeName=%q  does not exist",
+			needed, nodeName)
+		glog.Errorf(errMsg)
+		return fmt.Errorf(errMsg)
 	}
 
 	nodeToUpdate.statusUpdateNeeded = needed
 	asw.nodesToUpdateStatusFor[nodeName] = nodeToUpdate
+
+	return nil
 }
 
 func (asw *actualStateOfWorld) SetNodeStatusUpdateNeeded(nodeName types.NodeName) {
 	asw.Lock()
 	defer asw.Unlock()
-	asw.updateNodeStatusUpdateNeeded(nodeName, true)
+	if err := asw.updateNodeStatusUpdateNeeded(nodeName, true); err != nil {
+		glog.Errorf("Failed to update statusUpdateNeeded field in actual state of world: %v", err)
+	}
 }
 
 func (asw *actualStateOfWorld) DeleteVolumeNode(
@@ -585,10 +592,16 @@ func (asw *actualStateOfWorld) GetVolumesToReportAttached() map[types.NodeName][
 		// When GetVolumesToReportAttached is called by node status updater, the current status
 		// of this node will be updated, so set the flag statusUpdateNeeded to false indicating
 		// the current status is already updated.
-		asw.updateNodeStatusUpdateNeeded(nodeName, false)
+		if err := asw.updateNodeStatusUpdateNeeded(nodeName, false); err != nil {
+			glog.Errorf("Failed to update statusUpdateNeeded field when getting volumes: %v", err)
+		}
 	}
 
 	return volumesToReportAttached
+}
+
+func (asw *actualStateOfWorld) GetNodesToUpdateStatusFor() map[types.NodeName]nodeToUpdateStatusFor {
+	return asw.nodesToUpdateStatusFor
 }
 
 func getAttachedVolume(

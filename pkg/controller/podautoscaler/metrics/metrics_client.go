@@ -23,13 +23,14 @@ import (
 	"time"
 
 	"github.com/golang/glog"
-	"k8s.io/kubernetes/pkg/api/v1"
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
-	v1core "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5/typed/core/v1"
-	"k8s.io/kubernetes/pkg/labels"
-
 	heapster "k8s.io/heapster/metrics/api/v1/types"
-	metrics_api "k8s.io/heapster/metrics/apis/metrics/v1alpha1"
+	metricsapi "k8s.io/heapster/metrics/apis/metrics/v1alpha1"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/kubernetes/pkg/api/v1"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/clientset"
+	v1core "k8s.io/kubernetes/pkg/client/clientset_generated/clientset/typed/core/v1"
 )
 
 // PodResourceInfo contains pod resourcemetric values as a map from pod names to
@@ -92,7 +93,7 @@ func (h *HeapsterMetricsClient) GetResourceMetric(resource v1.ResourceName, name
 
 	glog.V(4).Infof("Heapster metrics result: %s", string(resultRaw))
 
-	metrics := metrics_api.PodMetricsList{}
+	metrics := metricsapi.PodMetricsList{}
 	err = json.Unmarshal(resultRaw, &metrics)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("failed to unmarshal heapster response: %v", err)
@@ -122,16 +123,13 @@ func (h *HeapsterMetricsClient) GetResourceMetric(resource v1.ResourceName, name
 		}
 	}
 
-	timestamp := time.Time{}
-	if len(metrics.Items) > 0 {
-		timestamp = metrics.Items[0].Timestamp.Time
-	}
+	timestamp := metrics.Items[0].Timestamp.Time
 
 	return res, timestamp, nil
 }
 
 func (h *HeapsterMetricsClient) GetRawMetric(metricName string, namespace string, selector labels.Selector) (PodMetricsInfo, time.Time, error) {
-	podList, err := h.podsGetter.Pods(namespace).List(v1.ListOptions{LabelSelector: selector.String()})
+	podList, err := h.podsGetter.Pods(namespace).List(metav1.ListOptions{LabelSelector: selector.String()})
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("failed to get pod list while fetching metrics: %v", err)
 	}

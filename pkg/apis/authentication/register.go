@@ -17,9 +17,8 @@ limitations under the License.
 package authentication
 
 import (
-	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // GroupName is the group name use in this package
@@ -45,10 +44,6 @@ var (
 
 func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(SchemeGroupVersion,
-		&api.ListOptions{},
-		&api.DeleteOptions{},
-		&api.ExportOptions{},
-
 		&TokenReview{},
 	)
 	return nil

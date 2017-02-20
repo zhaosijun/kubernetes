@@ -20,13 +20,14 @@ import (
 	"fmt"
 	"os"
 	"path"
-	goStrings "strings"
+	gostrings "strings"
 
 	"github.com/golang/glog"
 	"github.com/pborman/uuid"
-	"k8s.io/kubernetes/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/types"
 	"k8s.io/kubernetes/pkg/util/exec"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/util/strings"
@@ -182,7 +183,7 @@ func (plugin *quobytePlugin) newUnmounterInternal(volName string, podUID types.U
 		&quobyte{
 			volName: volName,
 			mounter: mounter,
-			pod:     &v1.Pod{ObjectMeta: v1.ObjectMeta{UID: podUID}},
+			pod:     &v1.Pod{ObjectMeta: metav1.ObjectMeta{UID: podUID}},
 			plugin:  plugin,
 		},
 	}, nil
@@ -358,7 +359,7 @@ func (provisioner *quobyteVolumeProvisioner) Provision() (*v1.PersistentVolume, 
 		return nil, err
 	}
 	for k, v := range provisioner.options.Parameters {
-		switch goStrings.ToLower(k) {
+		switch gostrings.ToLower(k) {
 		case "registry":
 			provisioner.registry = v
 		case "user":
@@ -434,7 +435,7 @@ func parseAPIConfig(plugin *quobytePlugin, params map[string]string) (*quobyteAP
 	deleteKeys := []string{}
 
 	for k, v := range params {
-		switch goStrings.ToLower(k) {
+		switch gostrings.ToLower(k) {
 		case "adminsecretname":
 			secretName = v
 			deleteKeys = append(deleteKeys, k)

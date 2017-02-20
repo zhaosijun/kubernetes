@@ -23,14 +23,14 @@ source "${KUBE_ROOT}/cluster/gce/${KUBE_CONFIG_FILE-"config-default.sh"}"
 source "${KUBE_ROOT}/cluster/common.sh"
 source "${KUBE_ROOT}/cluster/lib/util.sh"
 
-if [[ "${NODE_OS_DISTRIBUTION}" == "debian" || "${NODE_OS_DISTRIBUTION}" == "coreos" || "${NODE_OS_DISTRIBUTION}" == "trusty" || "${NODE_OS_DISTRIBUTION}" == "gci" ]]; then
+if [[ "${NODE_OS_DISTRIBUTION}" == "debian" || "${NODE_OS_DISTRIBUTION}" == "container-linux" || "${NODE_OS_DISTRIBUTION}" == "trusty" || "${NODE_OS_DISTRIBUTION}" == "gci" ]]; then
   source "${KUBE_ROOT}/cluster/gce/${NODE_OS_DISTRIBUTION}/node-helper.sh"
 else
   echo "Cannot operate on cluster using node os distro: ${NODE_OS_DISTRIBUTION}" >&2
   exit 1
 fi
 
-if [[ "${MASTER_OS_DISTRIBUTION}" == "debian" || "${MASTER_OS_DISTRIBUTION}" == "coreos" || "${MASTER_OS_DISTRIBUTION}" == "trusty" || "${MASTER_OS_DISTRIBUTION}" == "gci" ]]; then
+if [[ "${MASTER_OS_DISTRIBUTION}" == "debian" || "${MASTER_OS_DISTRIBUTION}" == "container-linux" || "${MASTER_OS_DISTRIBUTION}" == "trusty" || "${MASTER_OS_DISTRIBUTION}" == "gci" ]]; then
   source "${KUBE_ROOT}/cluster/gce/${MASTER_OS_DISTRIBUTION}/master-helper.sh"
 else
   echo "Cannot operate on cluster using master os distro: ${MASTER_OS_DISTRIBUTION}" >&2
@@ -80,8 +80,7 @@ NODE_TAGS="${NODE_TAG}"
 
 ALLOCATE_NODE_CIDRS=true
 
-KUBE_PROMPT_FOR_UPDATE=y
-KUBE_SKIP_UPDATE=${KUBE_SKIP_UPDATE-"n"}
+KUBE_PROMPT_FOR_UPDATE=${KUBE_PROMPT_FOR_UPDATE:-"n"}
 # How long (in seconds) to wait for cluster initialization.
 KUBE_CLUSTER_INITIALIZATION_TIMEOUT=${KUBE_CLUSTER_INITIALIZATION_TIMEOUT:-300}
 
@@ -99,12 +98,10 @@ function verify-prereqs() {
   local cmd
   for cmd in gcloud gsutil; do
     if ! which "${cmd}" >/dev/null; then
-      local resp
+      local resp="n"
       if [[ "${KUBE_PROMPT_FOR_UPDATE}" == "y" ]]; then
         echo "Can't find ${cmd} in PATH.  Do you wish to install the Google Cloud SDK? [Y/n]"
         read resp
-      else
-        resp="y"
       fi
       if [[ "${resp}" != "n" && "${resp}" != "N" ]]; then
         curl https://sdk.cloud.google.com | bash
@@ -116,31 +113,7 @@ function verify-prereqs() {
       fi
     fi
   done
-  if [[ "${KUBE_SKIP_UPDATE}" == "y" ]]; then
-    return
-  fi
-  # update and install components as needed
-  if [[ "${KUBE_PROMPT_FOR_UPDATE}" != "y" ]]; then
-    gcloud_prompt="-q"
-  fi
-  local sudo_prefix=""
-  if [ ! -w $(dirname `which gcloud`) ]; then
-    sudo_prefix="sudo"
-  fi
-  ${sudo_prefix} gcloud ${gcloud_prompt:-} components install alpha || true
-  ${sudo_prefix} gcloud ${gcloud_prompt:-} components install beta || true
-  ${sudo_prefix} gcloud ${gcloud_prompt:-} components update || true
-}
-
-# Create a temp dir that'll be deleted at the end of this bash session.
-#
-# Vars set:
-#   KUBE_TEMP
-function ensure-temp-dir() {
-  if [[ -z ${KUBE_TEMP-} ]]; then
-    KUBE_TEMP=$(mktemp -d -t kubernetes.XXXXXX)
-    trap 'rm -rf "${KUBE_TEMP}"' EXIT
-  fi
+  update-or-verify-gcloud
 }
 
 # Use the gcloud defaults to find the project.  If it is already set in the
@@ -398,6 +371,9 @@ function get-master-env() {
   gcloud compute --project ${PROJECT} ssh --zone ${ZONE} ${KUBE_MASTER} --command \
     "curl --fail --silent -H 'Metadata-Flavor: Google' \
       'http://metadata/computeMetadata/v1/instance/attributes/kube-env'" 2>/dev/null
+  gcloud compute --project ${PROJECT} ssh --zone ${ZONE} ${KUBE_MASTER} --command \
+    "curl --fail --silent -H 'Metadata-Flavor: Google' \
+      'http://metadata/computeMetadata/v1/instance/attributes/kube-master-certs'" 2>/dev/null
 }
 
 # Robustly try to create a static ip.
@@ -612,6 +588,7 @@ function kube-up() {
   set_num_migs
 
   if [[ ${KUBE_USE_EXISTING_MASTER:-} == "true" ]]; then
+    detect-master
     parse-master-env
     create-nodes
   elif [[ ${KUBE_REPLICATE_EXISTING_MASTER:-} == "true" ]]; then
@@ -669,8 +646,8 @@ function create-network() {
     gcloud compute networks create --project "${PROJECT}" "${NETWORK}" --range "10.240.0.0/16"
   fi
 
-  if ! gcloud compute firewall-rules --project "${PROJECT}" describe "${NETWORK}-default-internal-master" &>/dev/null; then
-    gcloud compute firewall-rules create "${NETWORK}-default-internal-master" \
+  if ! gcloud compute firewall-rules --project "${PROJECT}" describe "${CLUSTER_NAME}-default-internal-master" &>/dev/null; then
+    gcloud compute firewall-rules create "${CLUSTER_NAME}-default-internal-master" \
       --project "${PROJECT}" \
       --network "${NETWORK}" \
       --source-ranges "10.0.0.0/8" \
@@ -678,8 +655,8 @@ function create-network() {
       --target-tags "${MASTER_TAG}"&
   fi
 
-  if ! gcloud compute firewall-rules --project "${PROJECT}" describe "${NETWORK}-default-internal-node" &>/dev/null; then
-    gcloud compute firewall-rules create "${NETWORK}-default-internal-node" \
+  if ! gcloud compute firewall-rules --project "${PROJECT}" describe "${CLUSTER_NAME}-default-internal-node" &>/dev/null; then
+    gcloud compute firewall-rules create "${CLUSTER_NAME}-default-internal-node" \
       --project "${PROJECT}" \
       --network "${NETWORK}" \
       --source-ranges "10.0.0.0/8" \
@@ -741,6 +718,7 @@ function get-master-disk-size() {
   fi
 }
 
+
 # Generates SSL certificates for etcd cluster. Uses cfssl program.
 #
 # Assumed vars:
@@ -764,27 +742,9 @@ function create-etcd-certs {
   local ca_cert=${2:-}
   local ca_key=${3:-}
 
-  mkdir -p "${KUBE_TEMP}/cfssl"
+  download-cfssl
+
   pushd "${KUBE_TEMP}/cfssl"
-
-  kernel=$(uname -s)
-  case "${kernel}" in
-    Linux)
-      curl -s -L -o cfssl https://pkg.cfssl.org/R1.2/cfssl_linux-amd64
-      curl -s -L -o cfssljson https://pkg.cfssl.org/R1.2/cfssljson_linux-amd64
-      ;;
-    Darwin)
-      curl -s -L -o cfssl https://pkg.cfssl.org/R1.2/cfssl_darwin-amd64
-      curl -s -L -o cfssljson https://pkg.cfssl.org/R1.2/cfssljson_darwin-amd64
-      ;;
-    *)
-      echo "Unknown, unsupported platform: ${kernel}." >&2
-      echo "Supported platforms: Linux, Darwin." >&2
-      exit 2
-  esac
-
-  chmod +x cfssl
-  chmod +x cfssljson
 
   cat >ca-config.json <<EOF
 {
@@ -865,6 +825,9 @@ function create-master() {
   # http://issue.k8s.io/3168
   KUBELET_TOKEN=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | base64 | tr -d "=+/" | dd bs=32 count=1 2>/dev/null)
   KUBE_PROXY_TOKEN=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | base64 | tr -d "=+/" | dd bs=32 count=1 2>/dev/null)
+  if [[ "${ENABLE_NODE_PROBLEM_DETECTOR:-}" == "standalone" ]]; then
+    NODE_PROBLEM_DETECTOR_TOKEN=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | base64 | tr -d "=+/" | dd bs=32 count=1 2>/dev/null)
+  fi
 
   # Reserve the master's IP so that it can later be transferred to another VM
   # without disrupting the kubelets.
@@ -1019,9 +982,9 @@ function create-loadbalancer() {
   attach-external-ip "${EXISTING_MASTER_NAME}" "${EXISTING_MASTER_ZONE}"
 
   # Step 2: Create target pool.
-  gcloud compute target-pools create "${MASTER_NAME}" --region "${REGION}"
+  gcloud compute target-pools create "${MASTER_NAME}" --project "${PROJECT}" --region "${REGION}"
   # TODO: We should also add master instances with suffixes
-  gcloud compute target-pools add-instances "${MASTER_NAME}" --instances "${EXISTING_MASTER_NAME}" --zone "${EXISTING_MASTER_ZONE}"
+  gcloud compute target-pools add-instances "${MASTER_NAME}" --instances "${EXISTING_MASTER_NAME}" --project "${PROJECT}" --zone "${EXISTING_MASTER_ZONE}"
 
   # Step 3: Create forwarding rule.
   # TODO: This step can take up to 20 min. We need to speed this up...
@@ -1328,7 +1291,7 @@ function kube-down() {
     done
   fi
 
-  local -r REPLICA_NAME="$(get-replica-name)"
+  local -r REPLICA_NAME="${KUBE_REPLICA_NAME:-$(get-replica-name)}"
 
   set-existing-master
 
@@ -1383,7 +1346,7 @@ function kube-down() {
     --format "value(zone)" | wc -l)
 
   # In the replicated scenario, if there's only a single master left, we should also delete load balancer in front of it.
-  if [[ "${REMAINING_MASTER_COUNT}" == "1" ]]; then
+  if [[ "${REMAINING_MASTER_COUNT}" -eq 1 ]]; then
     if gcloud compute forwarding-rules describe "${MASTER_NAME}" --region "${REGION}" --project "${PROJECT}" &>/dev/null; then
       detect-master
       local REMAINING_REPLICA_NAME="$(get-all-replica-names)"
@@ -1404,7 +1367,7 @@ function kube-down() {
   fi
 
   # If there are no more remaining master replicas, we should delete all remaining network resources.
-  if [[ "${REMAINING_MASTER_COUNT}" == "0" ]]; then
+  if [[ "${REMAINING_MASTER_COUNT}" -eq 0 ]]; then
     # Delete firewall rule for the master, etcd servers, and nodes.
     delete-firewall-rules "${MASTER_NAME}-https" "${MASTER_NAME}-etcd" "${NODE_TAG}-all"
     # Delete the master's reserved IP
@@ -1438,7 +1401,7 @@ function kube-down() {
   fi
 
   # If there are no more remaining master replicas: delete routes, pd for influxdb and update kubeconfig
-  if [[ "${REMAINING_MASTER_COUNT}" == "0" ]]; then
+  if [[ "${REMAINING_MASTER_COUNT}" -eq 0 ]]; then
     # Delete routes.
     local -a routes
     # Clean up all routes w/ names like "<cluster-name>-<node-GUID>"
@@ -1470,8 +1433,8 @@ function kube-down() {
 
     # Delete all remaining firewall rules and network.
     delete-firewall-rules \
-      "${NETWORK}-default-internal-master" \
-      "${NETWORK}-default-internal-node" \
+      "${CLUSTER_NAME}-default-internal-master" \
+      "${CLUSTER_NAME}-default-internal-node" \
       "${NETWORK}-default-ssh" \
       "${NETWORK}-default-internal"  # Pre-1.5 clusters
     if [[ "${KUBE_DELETE_NETWORK}" == "true" ]]; then
@@ -1491,9 +1454,9 @@ function kube-down() {
     # - 1: fatal error - cluster won't be working correctly
     # - 2: weak error - something went wrong, but cluster probably will be working correctly
     # We just print an error message in case 2).
-    if [[ "${validate_result}" == "1" ]]; then
+    if [[ "${validate_result}" -eq 1 ]]; then
       exit 1
-    elif [[ "${validate_result}" == "2" ]]; then
+    elif [[ "${validate_result}" -eq 2 ]]; then
       echo "...ignoring non-fatal errors in validate-cluster" >&2
     fi
   fi
@@ -1667,7 +1630,7 @@ function check-resources() {
 #  $1 - whether prepare push to node
 function prepare-push() {
   local node="${1-}"
-  #TODO(dawnchen): figure out how to upgrade coreos node
+  #TODO(dawnchen): figure out how to upgrade a Container Linux node
   if [[ "${node}" == "true" && "${NODE_OS_DISTRIBUTION}" != "debian" ]]; then
     echo "Updating nodes in a kubernetes cluster with ${NODE_OS_DISTRIBUTION} is not supported yet." >&2
     exit 1
@@ -1807,7 +1770,7 @@ function kube-push() {
 #   KUBE_ROOT
 function test-build-release() {
   # Make a release
-  "${KUBE_ROOT}/build-tools/release.sh"
+  "${KUBE_ROOT}/build/release.sh"
 }
 
 # Execute prior to running tests to initialize required structure. This is
@@ -1913,5 +1876,14 @@ function prepare-e2e() {
 # limits the size of metadata fields to 32K, and stripping comments is the
 # easiest way to buy us a little more room.
 function prepare-startup-script() {
-  sed '/^\s*#\([^!].*\)*$/ d' ${KUBE_ROOT}/cluster/gce/configure-vm.sh > ${KUBE_TEMP}/configure-vm.sh
+  # Find a standard sed instance (and ensure that the command works as expected on a Mac).
+  SED=sed
+  if which gsed &>/dev/null; then
+    SED=gsed
+  fi
+  if ! ($SED --version 2>&1 | grep -q GNU); then
+    echo "!!! GNU sed is required.  If on OS X, use 'brew install gnu-sed'."
+    exit 1
+  fi
+  $SED '/^\s*#\([^!].*\)*$/ d' ${KUBE_ROOT}/cluster/gce/configure-vm.sh > ${KUBE_TEMP}/configure-vm.sh
 }

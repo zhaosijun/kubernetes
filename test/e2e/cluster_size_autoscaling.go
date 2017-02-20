@@ -26,10 +26,11 @@ import (
 	"strings"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kubernetes/pkg/api/v1"
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
-	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/util/sets"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/clientset"
 	"k8s.io/kubernetes/test/e2e/framework"
 	testutils "k8s.io/kubernetes/test/utils"
 
@@ -106,7 +107,7 @@ var _ = framework.KubeDescribe("Cluster size autoscaling [Slow]", func() {
 	EventsLoop:
 		for start := time.Now(); time.Since(start) < scaleUpTimeout; time.Sleep(20 * time.Second) {
 			By("Waiting for NotTriggerScaleUp event")
-			events, err := f.ClientSet.Core().Events(f.Namespace.Name).List(v1.ListOptions{})
+			events, err := f.ClientSet.Core().Events(f.Namespace.Name).List(metav1.ListOptions{})
 			framework.ExpectNoError(err)
 
 			for _, e := range events.Items {
@@ -192,7 +193,7 @@ var _ = framework.KubeDescribe("Cluster size autoscaling [Slow]", func() {
 		}
 
 		nodes, err := GetGroupNodes(minMig)
-		ExpectNoError(err)
+		framework.ExpectNoError(err)
 		nodesSet := sets.NewString(nodes...)
 		defer removeLabels(nodesSet)
 		By(fmt.Sprintf("Annotating nodes of the smallest MIG(%s): %v", minMig, nodes))
@@ -207,15 +208,49 @@ var _ = framework.KubeDescribe("Cluster size autoscaling [Slow]", func() {
 			func(size int) bool { return size >= nodeCount+1 }, scaleUpTimeout))
 
 		newNodes, err := GetGroupNodes(minMig)
-		ExpectNoError(err)
+		framework.ExpectNoError(err)
 		newNodesSet := sets.NewString(newNodes...)
 		newNodesSet.Delete(nodes...)
-		defer removeLabels(newNodesSet)
-		By(fmt.Sprintf("Setting labels for new nodes: %v", newNodesSet.List()))
-		updateNodeLabels(c, newNodesSet, labels, nil)
+		if len(newNodesSet) > 1 {
+			By(fmt.Sprintf("Spotted following new nodes in %s: %v", minMig, newNodesSet))
+			glog.Infof("Usually only 1 new node is expected, investigating")
+			glog.Infof("Kubectl:%s\n", framework.RunKubectlOrDie("get", "nodes", "-o", "json"))
+			if output, err := exec.Command("gcloud", "compute", "instances", "list",
+				"--project="+framework.TestContext.CloudConfig.ProjectID,
+				"--zone="+framework.TestContext.CloudConfig.Zone).Output(); err == nil {
+				glog.Infof("Gcloud compute instances list: %s", output)
+			} else {
+				glog.Errorf("Failed to get instances list: %v", err)
+			}
 
-		framework.ExpectNoError(WaitForClusterSizeFunc(f.ClientSet,
-			func(size int) bool { return size >= nodeCount+1 }, scaleUpTimeout))
+			for newNode := range newNodesSet {
+				if output, err := exec.Command("gcloud", "compute", "instances", "describe",
+					newNode,
+					"--project="+framework.TestContext.CloudConfig.ProjectID,
+					"--zone="+framework.TestContext.CloudConfig.Zone).Output(); err == nil {
+					glog.Infof("Gcloud compute instances describe: %s", output)
+				} else {
+					glog.Errorf("Failed to get instances describe: %v", err)
+				}
+			}
+
+			// TODO: possibly remove broken node from newNodesSet to prevent removeLabel from crashing.
+			// However at this moment we DO WANT it to crash so that we don't check all test runs for the
+			// rare behavior, but only the broken ones.
+		}
+		By(fmt.Sprintf("New nodes: %v\n", newNodesSet))
+		registeredNodes := sets.NewString()
+		for nodeName := range newNodesSet {
+			node, err := f.ClientSet.Core().Nodes().Get(nodeName, metav1.GetOptions{})
+			if err == nil && node != nil {
+				registeredNodes.Insert(nodeName)
+			} else {
+				glog.Errorf("Failed to get node %v: %v", nodeName, err)
+			}
+		}
+		By(fmt.Sprintf("Setting labels for registered new nodes: %v", registeredNodes.List()))
+		updateNodeLabels(c, registeredNodes, labels, nil)
+		defer removeLabels(registeredNodes)
 
 		framework.ExpectNoError(waitForAllCaPodsReadyInNamespace(f, c))
 		framework.ExpectNoError(framework.DeleteRCAndPods(f.ClientSet, f.InternalClientset, f.Namespace.Name, "node-selector"))
@@ -460,13 +495,13 @@ func CreateNodeSelectorPods(f *framework.Framework, id string, replicas int, nod
 	config := &testutils.RCConfig{
 		Client:         f.ClientSet,
 		InternalClient: f.InternalClientset,
-		Name:           "node-selector",
+		Name:           id,
 		Namespace:      f.Namespace.Name,
 		Timeout:        defaultTimeout,
 		Image:          framework.GetPauseImageName(f.ClientSet),
 		Replicas:       replicas,
 		HostPorts:      map[string]int{"port1": 4321},
-		NodeSelector:   map[string]string{"cluster-autoscaling-test.special-node": "true"},
+		NodeSelector:   nodeSelector,
 	}
 	err := framework.RunRC(*config)
 	if expectRunning {
@@ -530,7 +565,7 @@ func ReserveMemory(f *framework.Framework, id string, replicas, megabytes int, e
 // WaitForClusterSize waits until the cluster size matches the given function.
 func WaitForClusterSizeFunc(c clientset.Interface, sizeFunc func(int) bool, timeout time.Duration) error {
 	for start := time.Now(); time.Since(start) < timeout; time.Sleep(20 * time.Second) {
-		nodes, err := c.Core().Nodes().List(v1.ListOptions{FieldSelector: fields.Set{
+		nodes, err := c.Core().Nodes().List(metav1.ListOptions{FieldSelector: fields.Set{
 			"spec.unschedulable": "false",
 		}.AsSelector().String()})
 		if err != nil {
@@ -557,7 +592,7 @@ func WaitForClusterSizeFunc(c clientset.Interface, sizeFunc func(int) bool, time
 func waitForAllCaPodsReadyInNamespace(f *framework.Framework, c clientset.Interface) error {
 	var notready []string
 	for start := time.Now(); time.Now().Before(start.Add(scaleUpTimeout)); time.Sleep(20 * time.Second) {
-		pods, err := c.Core().Pods(f.Namespace.Name).List(v1.ListOptions{})
+		pods, err := c.Core().Pods(f.Namespace.Name).List(metav1.ListOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to get pods: %v", err)
 		}

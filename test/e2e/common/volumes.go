@@ -47,10 +47,10 @@ import (
 	"strings"
 	"time"
 
-	apierrs "k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/unversioned"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/api/v1"
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/clientset"
 	"k8s.io/kubernetes/test/e2e/framework"
 
 	"github.com/golang/glog"
@@ -118,11 +118,11 @@ func startVolumeServer(f *framework.Framework, config VolumeTestConfig) *v1.Pod 
 	privileged := new(bool)
 	*privileged = true
 	serverPod := &v1.Pod{
-		TypeMeta: unversioned.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind:       "Pod",
 			APIVersion: "v1",
 		},
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: config.prefix + "-server",
 			Labels: map[string]string{
 				"role": config.prefix + "-server",
@@ -148,7 +148,7 @@ func startVolumeServer(f *framework.Framework, config VolumeTestConfig) *v1.Pod 
 	serverPod = podClient.CreateSync(serverPod)
 
 	By("locating the server pod")
-	pod, err := podClient.Get(serverPod.Name)
+	pod, err := podClient.Get(serverPod.Name, metav1.GetOptions{})
 	framework.ExpectNoError(err, "Cannot locate the server pod %v: %v", serverPod.Name, err)
 
 	By("sleeping a bit to give the server time to start")
@@ -194,11 +194,11 @@ func volumeTestCleanup(f *framework.Framework, config VolumeTestConfig) {
 func testVolumeClient(f *framework.Framework, config VolumeTestConfig, volume v1.VolumeSource, fsGroup *int64, expectedContent string) {
 	By(fmt.Sprint("starting ", config.prefix, " client"))
 	clientPod := &v1.Pod{
-		TypeMeta: unversioned.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind:       "Pod",
 			APIVersion: "v1",
 		},
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: config.prefix + "-client",
 			Labels: map[string]string{
 				"role": config.prefix + "-client",
@@ -270,11 +270,11 @@ func injectHtml(client clientset.Interface, config VolumeTestConfig, volume v1.V
 	podClient := client.Core().Pods(config.namespace)
 
 	injectPod := &v1.Pod{
-		TypeMeta: unversioned.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind:       "Pod",
 			APIVersion: "v1",
 		},
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: config.prefix + "-injector",
 			Labels: map[string]string{
 				"role": config.prefix + "-injector",
@@ -364,7 +364,7 @@ var _ = framework.KubeDescribe("GCP Volumes", func() {
 	////////////////////////////////////////////////////////////////////////
 
 	framework.KubeDescribe("NFSv4", func() {
-		It("should be mountable for NFSv4", func() {
+		It("should be mountable for NFSv4 [Volume]", func() {
 			config := VolumeTestConfig{
 				namespace:   namespace.Name,
 				prefix:      "nfs",
@@ -398,7 +398,7 @@ var _ = framework.KubeDescribe("GCP Volumes", func() {
 	////////////////////////////////////////////////////////////////////////
 
 	framework.KubeDescribe("GlusterFS", func() {
-		It("should be mountable", func() {
+		It("should be mountable [Volume]", func() {
 			config := VolumeTestConfig{
 				namespace:   namespace.Name,
 				prefix:      "gluster",
@@ -417,11 +417,11 @@ var _ = framework.KubeDescribe("GCP Volumes", func() {
 
 			// create Endpoints for the server
 			endpoints := v1.Endpoints{
-				TypeMeta: unversioned.TypeMeta{
+				TypeMeta: metav1.TypeMeta{
 					Kind:       "Endpoints",
 					APIVersion: "v1",
 				},
-				ObjectMeta: v1.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name: config.prefix + "-server",
 				},
 				Subsets: []v1.EndpointSubset{

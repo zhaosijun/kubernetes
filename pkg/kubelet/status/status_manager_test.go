@@ -20,31 +20,33 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5"
-	"k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5/fake"
-	"k8s.io/kubernetes/pkg/client/testing/core"
-	"k8s.io/kubernetes/pkg/runtime/schema"
-
 	"github.com/stretchr/testify/assert"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	core "k8s.io/client-go/testing"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/api/v1"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/clientset"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/clientset/fake"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	kubepod "k8s.io/kubernetes/pkg/kubelet/pod"
 	podtest "k8s.io/kubernetes/pkg/kubelet/pod/testing"
+	kubesecret "k8s.io/kubernetes/pkg/kubelet/secret"
+	statustest "k8s.io/kubernetes/pkg/kubelet/status/testing"
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
-	"k8s.io/kubernetes/pkg/runtime"
 )
 
 // Generate new instance of test pod with the same initial value.
 func getTestPod() *v1.Pod {
 	return &v1.Pod{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			UID:       "12345678",
 			Name:      "foo",
 			Namespace: "new",
@@ -71,9 +73,9 @@ func (m *manager) testSyncBatch() {
 }
 
 func newTestManager(kubeClient clientset.Interface) *manager {
-	podManager := kubepod.NewBasicPodManager(podtest.NewFakeMirrorClient())
+	podManager := kubepod.NewBasicPodManager(podtest.NewFakeMirrorClient(), kubesecret.NewFakeManager())
 	podManager.AddPod(getTestPod())
-	return NewManager(kubeClient, podManager).(*manager)
+	return NewManager(kubeClient, podManager, &statustest.FakePodDeletionSafetyProvider{}).(*manager)
 }
 
 func generateRandomMessage() string {
@@ -138,15 +140,15 @@ func TestNewStatus(t *testing.T) {
 func TestNewStatusPreservesPodStartTime(t *testing.T) {
 	syncer := newTestManager(&fake.Clientset{})
 	pod := &v1.Pod{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			UID:       "12345678",
 			Name:      "foo",
 			Namespace: "new",
 		},
 		Status: v1.PodStatus{},
 	}
-	now := unversioned.Now()
-	startTime := unversioned.NewTime(now.Time.Add(-1 * time.Minute))
+	now := metav1.Now()
+	startTime := metav1.NewTime(now.Time.Add(-1 * time.Minute))
 	pod.Status.StartTime = &startTime
 	syncer.SetPodStatus(pod, getRandomPodStatus())
 
@@ -171,7 +173,7 @@ func TestNewStatusSetsReadyTransitionTime(t *testing.T) {
 	syncer := newTestManager(&fake.Clientset{})
 	podStatus := getReadyPodStatus()
 	pod := &v1.Pod{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			UID:       "12345678",
 			Name:      "foo",
 			Namespace: "new",
@@ -198,7 +200,7 @@ func TestChangedStatus(t *testing.T) {
 func TestChangedStatusKeepsStartTime(t *testing.T) {
 	syncer := newTestManager(&fake.Clientset{})
 	testPod := getTestPod()
-	now := unversioned.Now()
+	now := metav1.Now()
 	firstStatus := getRandomPodStatus()
 	firstStatus.StartTime = &now
 	syncer.SetPodStatus(testPod, firstStatus)
@@ -218,7 +220,7 @@ func TestChangedStatusUpdatesLastTransitionTime(t *testing.T) {
 	syncer := newTestManager(&fake.Clientset{})
 	podStatus := getReadyPodStatus()
 	pod := &v1.Pod{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			UID:       "12345678",
 			Name:      "foo",
 			Namespace: "new",
@@ -257,7 +259,7 @@ func TestUnchangedStatusPreservesLastTransitionTime(t *testing.T) {
 	syncer := newTestManager(&fake.Clientset{})
 	podStatus := getReadyPodStatus()
 	pod := &v1.Pod{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			UID:       "12345678",
 			Name:      "foo",
 			Namespace: "new",
@@ -375,7 +377,7 @@ func TestSyncBatchNoDeadlock(t *testing.T) {
 	client.ClearActions()
 
 	// Pod is terminated, but still running.
-	pod.DeletionTimestamp = new(unversioned.Time)
+	pod.DeletionTimestamp = new(metav1.Time)
 	m.SetPodStatus(pod, getRandomPodStatus())
 	m.testSyncBatch()
 	verifyActions(t, client, []core.Action{getAction, updateAction})
@@ -479,6 +481,40 @@ func TestStatusEquality(t *testing.T) {
 	}
 }
 
+func TestStatusNormalizationEnforcesMaxBytes(t *testing.T) {
+	pod := v1.Pod{
+		Spec: v1.PodSpec{},
+	}
+	containerStatus := []v1.ContainerStatus{}
+	for i := 0; i < 48; i++ {
+		s := v1.ContainerStatus{
+			Name: fmt.Sprintf("container%d", i),
+			LastTerminationState: v1.ContainerState{
+				Terminated: &v1.ContainerStateTerminated{
+					Message: strings.Repeat("abcdefgh", int(24+i%3)),
+				},
+			},
+		}
+		containerStatus = append(containerStatus, s)
+	}
+	podStatus := v1.PodStatus{
+		InitContainerStatuses: containerStatus[:24],
+		ContainerStatuses:     containerStatus[24:],
+	}
+	result := normalizeStatus(&pod, &podStatus)
+	count := 0
+	for _, s := range result.InitContainerStatuses {
+		l := len(s.LastTerminationState.Terminated.Message)
+		if l < 192 || l > 256 {
+			t.Errorf("container message had length %d", l)
+		}
+		count += l
+	}
+	if count > kubecontainer.MaxPodTerminationMessageLogLength {
+		t.Errorf("message length not truncated")
+	}
+}
+
 func TestStaticPod(t *testing.T) {
 	staticPod := getTestPod()
 	staticPod.Annotations = map[string]string{kubetypes.ConfigSourceAnnotationKey: "file"}
@@ -496,7 +532,7 @@ func TestStaticPod(t *testing.T) {
 	assert.True(t, kubepod.IsStaticPod(staticPod), "SetUp error: staticPod")
 
 	status := getRandomPodStatus()
-	now := unversioned.Now()
+	now := metav1.Now()
 	status.StartTime = &now
 	m.SetPodStatus(staticPod, status)
 
@@ -546,6 +582,34 @@ func TestStaticPod(t *testing.T) {
 	verifyActions(t, m.kubeClient, []core.Action{
 		core.GetActionImpl{ActionImpl: core.ActionImpl{Verb: "get", Resource: schema.GroupVersionResource{Resource: "pods"}}},
 	})
+}
+
+func TestTerminatePod(t *testing.T) {
+	syncer := newTestManager(&fake.Clientset{})
+	testPod := getTestPod()
+	// update the pod's status to Failed.  TerminatePod should preserve this status update.
+	firstStatus := getRandomPodStatus()
+	firstStatus.Phase = v1.PodFailed
+	syncer.SetPodStatus(testPod, firstStatus)
+
+	// set the testPod to a pod with Phase running, to simulate a stale pod
+	testPod.Status = getRandomPodStatus()
+	testPod.Status.Phase = v1.PodRunning
+
+	syncer.TerminatePod(testPod)
+
+	// we expect the container statuses to have changed to terminated
+	newStatus := expectPodStatus(t, syncer, testPod)
+	for i := range newStatus.ContainerStatuses {
+		assert.False(t, newStatus.ContainerStatuses[i].State.Terminated == nil, "expected containers to be terminated")
+	}
+	for i := range newStatus.InitContainerStatuses {
+		assert.False(t, newStatus.InitContainerStatuses[i].State.Terminated == nil, "expected init containers to be terminated")
+	}
+
+	// we expect the previous status update to be preserved.
+	assert.Equal(t, newStatus.Phase, firstStatus.Phase)
+	assert.Equal(t, newStatus.Message, firstStatus.Message)
 }
 
 func TestSetContainerReadiness(t *testing.T) {
@@ -740,13 +804,13 @@ func expectPodStatus(t *testing.T, m *manager, pod *v1.Pod) v1.PodStatus {
 func TestDeletePods(t *testing.T) {
 	pod := getTestPod()
 	// Set the deletion timestamp.
-	pod.DeletionTimestamp = new(unversioned.Time)
+	pod.DeletionTimestamp = new(metav1.Time)
 	client := fake.NewSimpleClientset(pod)
 	m := newTestManager(client)
 	m.podManager.AddPod(pod)
 
 	status := getRandomPodStatus()
-	now := unversioned.Now()
+	now := metav1.Now()
 	status.StartTime = &now
 	m.SetPodStatus(pod, status)
 
@@ -769,7 +833,7 @@ func TestDoNotDeleteMirrorPods(t *testing.T) {
 		kubetypes.ConfigMirrorAnnotationKey: "mirror",
 	}
 	// Set the deletion timestamp.
-	mirrorPod.DeletionTimestamp = new(unversioned.Time)
+	mirrorPod.DeletionTimestamp = new(metav1.Time)
 	client := fake.NewSimpleClientset(mirrorPod)
 	m := newTestManager(client)
 	m.podManager.AddPod(staticPod)
@@ -780,7 +844,7 @@ func TestDoNotDeleteMirrorPods(t *testing.T) {
 	assert.Equal(t, m.podManager.TranslatePodUID(mirrorPod.UID), staticPod.UID)
 
 	status := getRandomPodStatus()
-	now := unversioned.Now()
+	now := metav1.Now()
 	status.StartTime = &now
 	m.SetPodStatus(staticPod, status)
 

@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"strings"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/runtime/schema"
-	"k8s.io/kubernetes/pkg/runtime/serializer"
 )
 
 func (obj *MetadataOnlyObject) GetObjectKind() schema.ObjectKind     { return obj }
@@ -34,7 +34,7 @@ type metaOnlyJSONScheme struct{}
 
 // This function can be extended to mapping different gvk to different MetadataOnlyObject,
 // which embedded with different version of ObjectMeta. Currently the system
-// only supports v1.ObjectMeta.
+// only supports metav1.ObjectMeta.
 func gvkToMetadataOnlyObject(gvk schema.GroupVersionKind) runtime.Object {
 	if strings.HasSuffix(gvk.Kind, "List") {
 		return &MetadataOnlyObjectList{}
@@ -55,7 +55,7 @@ func NewMetadataCodecFactory() serializer.CodecFactory {
 		metaOnlyObject := gvkToMetadataOnlyObject(kind)
 		scheme.AddKnownTypeWithName(kind, metaOnlyObject)
 	}
-	scheme.AddUnversionedTypes(api.Unversioned, &unversioned.Status{})
+	scheme.AddUnversionedTypes(api.Unversioned, &metav1.Status{})
 	return serializer.NewCodecFactory(scheme)
 }
 

@@ -20,11 +20,11 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/kubernetes/pkg/api/unversioned"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/clock"
 	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/client/record"
-	"k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util/clock"
 )
 
 // mockPodStatusProvider returns the status on the specified pod
@@ -53,8 +53,8 @@ func TestActiveDeadlineHandler(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	now := unversioned.Now()
-	startTime := unversioned.NewTime(now.Time.Add(-1 * time.Minute))
+	now := metav1.Now()
+	startTime := metav1.NewTime(now.Time.Add(-1 * time.Minute))
 
 	// this pod has exceeded its active deadline
 	exceededActiveDeadlineSeconds := int64(30)

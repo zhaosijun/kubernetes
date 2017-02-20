@@ -23,18 +23,18 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/kubernetes/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	restclient "k8s.io/client-go/rest"
+	core "k8s.io/client-go/testing"
 	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/api/v1"
-	_ "k8s.io/kubernetes/pkg/apimachinery/registered"
-	"k8s.io/kubernetes/pkg/client/clientset_generated/release_1_5/fake"
-	"k8s.io/kubernetes/pkg/client/restclient"
-	"k8s.io/kubernetes/pkg/client/testing/core"
-	"k8s.io/kubernetes/pkg/labels"
-	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/clientset/fake"
 
 	heapster "k8s.io/heapster/metrics/api/v1/types"
-	metrics_api "k8s.io/heapster/metrics/apis/metrics/v1alpha1"
+	metricsapi "k8s.io/heapster/metrics/apis/metrics/v1alpha1"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -103,18 +103,18 @@ func (tc *testCase) prepareTestClient(t *testing.T) *fake.Clientset {
 
 	if isResource {
 		fakeClient.AddProxyReactor("services", func(action core.Action) (handled bool, ret restclient.ResponseWrapper, err error) {
-			metrics := metrics_api.PodMetricsList{}
+			metrics := metricsapi.PodMetricsList{}
 			for i, containers := range tc.reportedPodMetrics {
-				metric := metrics_api.PodMetrics{
+				metric := metricsapi.PodMetrics{
 					ObjectMeta: v1.ObjectMeta{
 						Name:      fmt.Sprintf("%s-%d", podNamePrefix, i),
 						Namespace: namespace,
 					},
 					Timestamp:  unversioned.Time{Time: fixedTimestamp.Add(time.Duration(tc.targetTimestamp) * time.Minute)},
-					Containers: []metrics_api.ContainerMetrics{},
+					Containers: []metricsapi.ContainerMetrics{},
 				}
 				for j, cpu := range containers {
-					cm := metrics_api.ContainerMetrics{
+					cm := metricsapi.ContainerMetrics{
 						Name: fmt.Sprintf("%s-%d-container-%d", podNamePrefix, i, j),
 						Usage: v1.ResourceList{
 							v1.ResourceCPU: *resource.NewMilliQuantity(
@@ -162,7 +162,7 @@ func (tc *testCase) prepareTestClient(t *testing.T) *fake.Clientset {
 
 func buildPod(namespace, podName string, podLabels map[string]string, phase v1.PodPhase, request string) v1.Pod {
 	return v1.Pod{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      podName,
 			Namespace: namespace,
 			Labels:    podLabels,

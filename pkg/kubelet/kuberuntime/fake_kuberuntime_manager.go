@@ -22,18 +22,18 @@ import (
 	"time"
 
 	cadvisorapi "github.com/google/cadvisor/info/v1"
+	"k8s.io/apimachinery/pkg/types"
+	kubetypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/flowcontrol"
 	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/client/record"
 	"k8s.io/kubernetes/pkg/credentialprovider"
-	internalApi "k8s.io/kubernetes/pkg/kubelet/api"
+	internalapi "k8s.io/kubernetes/pkg/kubelet/api"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/images"
 	"k8s.io/kubernetes/pkg/kubelet/lifecycle"
 	"k8s.io/kubernetes/pkg/kubelet/network"
 	proberesults "k8s.io/kubernetes/pkg/kubelet/prober/results"
-	"k8s.io/kubernetes/pkg/types"
-	kubetypes "k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util/flowcontrol"
 )
 
 type fakeHTTP struct {
@@ -91,7 +91,7 @@ func (f *fakePodGetter) GetPodByUID(uid types.UID) (*v1.Pod, bool) {
 	return pod, found
 }
 
-func NewFakeKubeRuntimeManager(runtimeService internalApi.RuntimeService, imageService internalApi.ImageManagerService, machineInfo *cadvisorapi.MachineInfo, networkPlugin network.NetworkPlugin, osInterface kubecontainer.OSInterface) (*kubeGenericRuntimeManager, error) {
+func NewFakeKubeRuntimeManager(runtimeService internalapi.RuntimeService, imageService internalapi.ImageManagerService, machineInfo *cadvisorapi.MachineInfo, networkPlugin network.NetworkPlugin, osInterface kubecontainer.OSInterface) (*kubeGenericRuntimeManager, error) {
 	recorder := &record.FakeRecorder{}
 	kubeRuntimeManager := &kubeGenericRuntimeManager{
 		recorder:            recorder,
@@ -113,7 +113,7 @@ func NewFakeKubeRuntimeManager(runtimeService internalApi.RuntimeService, imageS
 	}
 
 	kubeRuntimeManager.containerGC = NewContainerGC(runtimeService, newFakePodGetter(), kubeRuntimeManager)
-	kubeRuntimeManager.runtimeName = typedVersion.GetRuntimeName()
+	kubeRuntimeManager.runtimeName = typedVersion.RuntimeName
 	kubeRuntimeManager.imagePuller = images.NewImageManager(
 		kubecontainer.FilterEventRecorder(recorder),
 		kubeRuntimeManager,

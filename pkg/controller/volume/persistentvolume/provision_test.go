@@ -20,7 +20,7 @@ import (
 	"errors"
 	"testing"
 
-	"k8s.io/kubernetes/pkg/api/unversioned"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/api/v1"
 	storage "k8s.io/kubernetes/pkg/apis/storage/v1beta1"
 	storageutil "k8s.io/kubernetes/pkg/apis/storage/v1beta1/util"
@@ -34,11 +34,11 @@ var class2Parameters = map[string]string{
 }
 var storageClasses = []*storage.StorageClass{
 	{
-		TypeMeta: unversioned.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind: "StorageClass",
 		},
 
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: "gold",
 		},
 
@@ -46,30 +46,30 @@ var storageClasses = []*storage.StorageClass{
 		Parameters:  class1Parameters,
 	},
 	{
-		TypeMeta: unversioned.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind: "StorageClass",
 		},
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: "silver",
 		},
 		Provisioner: mockPluginName,
 		Parameters:  class2Parameters,
 	},
 	{
-		TypeMeta: unversioned.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind: "StorageClass",
 		},
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: "external",
 		},
 		Provisioner: "vendor.com/my-volume",
 		Parameters:  class1Parameters,
 	},
 	{
-		TypeMeta: unversioned.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind: "StorageClass",
 		},
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: "unknown-internal",
 		},
 		Provisioner: "kubernetes.io/unknown",
@@ -113,7 +113,7 @@ func TestProvisionSync(t *testing.T) {
 			newClaimArray("claim11-1", "uid11-1", "1Gi", "", v1.ClaimPending, storageutil.StorageClassAnnotation),
 			// Binding will be completed in the next syncClaim
 			newClaimArray("claim11-1", "uid11-1", "1Gi", "", v1.ClaimPending, storageutil.StorageClassAnnotation, annStorageProvisioner),
-			noevents, noerrors, wrapTestWithProvisionCalls([]provisionCall{provision1Success}, testSyncClaim),
+			[]string{"Normal ProvisioningSucceeded"}, noerrors, wrapTestWithProvisionCalls([]provisionCall{provision1Success}, testSyncClaim),
 		},
 		{
 			// Provision failure - plugin not found
@@ -185,7 +185,7 @@ func TestProvisionSync(t *testing.T) {
 			newClaimArray("claim11-8", "uid11-8", "1Gi", "", v1.ClaimPending, storageutil.StorageClassAnnotation),
 			// Binding will be completed in the next syncClaim
 			newClaimArray("claim11-8", "uid11-8", "1Gi", "", v1.ClaimPending, storageutil.StorageClassAnnotation, annStorageProvisioner),
-			noevents,
+			[]string{"Normal ProvisioningSucceeded"},
 			[]reactorError{
 				// Inject error to the first
 				// kubeclient.PersistentVolumes.Create() call. All other calls
@@ -306,7 +306,7 @@ func TestProvisionSync(t *testing.T) {
 			claimWithClass("silver", newClaimArray("claim11-13", "uid11-13", "1Gi", "", v1.ClaimPending)),
 			// Binding will be completed in the next syncClaim
 			claimWithClass("silver", newClaimArray("claim11-13", "uid11-13", "1Gi", "", v1.ClaimPending, annStorageProvisioner)),
-			noevents, noerrors, wrapTestWithProvisionCalls([]provisionCall{provision2Success}, testSyncClaim),
+			[]string{"Normal ProvisioningSucceeded"}, noerrors, wrapTestWithProvisionCalls([]provisionCall{provision2Success}, testSyncClaim),
 		},
 		{
 			// Provision error - non existing class
@@ -422,7 +422,7 @@ func TestProvisionMultiSync(t *testing.T) {
 
 // When provisioning is disabled, provisioning a claim should instantly return nil
 func TestDisablingDynamicProvisioner(t *testing.T) {
-	ctrl := newTestController(nil, nil, nil, nil, false)
+	ctrl := newTestController(nil, nil, false)
 	retVal := ctrl.provisionClaim(nil)
 	if retVal != nil {
 		t.Errorf("Expected nil return but got %v", retVal)

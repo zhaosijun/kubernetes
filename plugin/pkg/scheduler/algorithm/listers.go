@@ -19,16 +19,16 @@ package algorithm
 import (
 	"fmt"
 
-	"k8s.io/kubernetes/pkg/api/unversioned"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/kubernetes/pkg/api/v1"
 	extensions "k8s.io/kubernetes/pkg/apis/extensions/v1beta1"
-	"k8s.io/kubernetes/pkg/labels"
 )
 
 // NodeLister interface represents anything that can list nodes for a scheduler.
 type NodeLister interface {
 	// We explicitly return []*v1.Node, instead of v1.NodeList, to avoid
-	// performing expensive copies that are unneded.
+	// performing expensive copies that are unneeded.
 	List() ([]*v1.Node, error)
 }
 
@@ -43,7 +43,7 @@ func (f FakeNodeLister) List() ([]*v1.Node, error) {
 // PodLister interface represents anything that can list pods for a scheduler.
 type PodLister interface {
 	// We explicitly return []*v1.Pod, instead of v1.PodList, to avoid
-	// performing expensive copies that are unneded.
+	// performing expensive copies that are unneeded.
 	List(labels.Selector) ([]*v1.Pod, error)
 }
 
@@ -169,7 +169,7 @@ func (f FakeReplicaSetLister) GetPodReplicaSets(pod *v1.Pod) (rss []*extensions.
 		if rs.Namespace != pod.Namespace {
 			continue
 		}
-		selector, err = unversioned.LabelSelectorAsSelector(rs.Spec.Selector)
+		selector, err = metav1.LabelSelectorAsSelector(rs.Spec.Selector)
 		if err != nil {
 			return
 		}

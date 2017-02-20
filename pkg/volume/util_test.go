@@ -21,11 +21,12 @@ import (
 	"strings"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/resource"
 	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/watch"
 )
 
 type testcase struct {
@@ -56,8 +57,8 @@ func newEvent(eventtype, message string) watch.Event {
 	return watch.Event{
 		Type: watch.Added,
 		Object: &v1.Event{
-			ObjectMeta: v1.ObjectMeta{
-				Namespace: v1.NamespaceDefault,
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: metav1.NamespaceDefault,
 			},
 			Reason:  "MockEvent",
 			Message: message,
@@ -68,8 +69,8 @@ func newEvent(eventtype, message string) watch.Event {
 
 func newPod(name string, phase v1.PodPhase, message string) *v1.Pod {
 	return &v1.Pod{
-		ObjectMeta: v1.ObjectMeta{
-			Namespace: v1.NamespaceDefault,
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceDefault,
 			Name:      name,
 		},
 		Status: v1.PodStatus{
@@ -114,14 +115,14 @@ func TestRecyclerPod(t *testing.T) {
 				newPodEvent(watch.Added, "podRecyclerFailure", v1.PodPending, ""),
 				newEvent(v1.EventTypeNormal, "Successfully assigned recycler-for-podRecyclerFailure to 127.0.0.1"),
 				newEvent(v1.EventTypeWarning, "Unable to mount volumes for pod \"recycler-for-podRecyclerFailure_default(3c9809e5-347c-11e6-a79b-3c970e965218)\": timeout expired waiting for volumes to attach/mount"),
-				newEvent(v1.EventTypeWarning, "Error syncing pod, skipping: timeout expired waiting for volumes to attach/mount for pod \"recycler-for-podRecyclerFailure\"/\"default\". list of unattached/unmounted"),
+				newEvent(v1.EventTypeWarning, "Error syncing pod, skipping: timeout expired waiting for volumes to attach/mount for pod \"default\"/\"recycler-for-podRecyclerFailure\". list of unattached/unmounted"),
 				newPodEvent(watch.Modified, "podRecyclerFailure", v1.PodRunning, ""),
 				newPodEvent(watch.Modified, "podRecyclerFailure", v1.PodFailed, "Pod was active on the node longer than specified deadline"),
 			},
 			expectedEvents: []mockEvent{
 				{v1.EventTypeNormal, "Successfully assigned recycler-for-podRecyclerFailure to 127.0.0.1"},
 				{v1.EventTypeWarning, "Unable to mount volumes for pod \"recycler-for-podRecyclerFailure_default(3c9809e5-347c-11e6-a79b-3c970e965218)\": timeout expired waiting for volumes to attach/mount"},
-				{v1.EventTypeWarning, "Error syncing pod, skipping: timeout expired waiting for volumes to attach/mount for pod \"recycler-for-podRecyclerFailure\"/\"default\". list of unattached/unmounted"},
+				{v1.EventTypeWarning, "Error syncing pod, skipping: timeout expired waiting for volumes to attach/mount for pod \"default\"/\"recycler-for-podRecyclerFailure\". list of unattached/unmounted"},
 			},
 			expectedError: "Pod was active on the node longer than specified deadline",
 		},

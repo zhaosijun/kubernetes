@@ -22,13 +22,15 @@ import (
 	"runtime"
 
 	"github.com/golang/glog"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/conversion"
-	"k8s.io/kubernetes/pkg/types"
 	"k8s.io/kubernetes/pkg/util/exec"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/util/strings"
 	"k8s.io/kubernetes/pkg/volume"
+	"k8s.io/kubernetes/pkg/volume/util"
 )
 
 // This is the primary entrypoint for volume plugins.
@@ -126,7 +128,7 @@ func (plugin *nfsPlugin) newUnmounterInternal(volName string, podUID types.UID, 
 	return &nfsUnmounter{&nfs{
 		volName: volName,
 		mounter: mounter,
-		pod:     &v1.Pod{ObjectMeta: v1.ObjectMeta{UID: podUID}},
+		pod:     &v1.Pod{ObjectMeta: metav1.ObjectMeta{UID: podUID}},
 		plugin:  plugin,
 	}}, nil
 }
@@ -270,31 +272,7 @@ func (c *nfsUnmounter) TearDown() error {
 }
 
 func (c *nfsUnmounter) TearDownAt(dir string) error {
-	notMnt, err := c.mounter.IsLikelyNotMountPoint(dir)
-	if err != nil {
-		glog.Errorf("Error checking IsLikelyNotMountPoint: %v", err)
-		return err
-	}
-	if notMnt {
-		return os.Remove(dir)
-	}
-
-	if err := c.mounter.Unmount(dir); err != nil {
-		glog.Errorf("Unmounting failed: %v", err)
-		return err
-	}
-	notMnt, mntErr := c.mounter.IsLikelyNotMountPoint(dir)
-	if mntErr != nil {
-		glog.Errorf("IsLikelyNotMountPoint check failed: %v", mntErr)
-		return mntErr
-	}
-	if notMnt {
-		if err := os.Remove(dir); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return util.UnmountPath(dir, c.mounter)
 }
 
 func newRecycler(pvName string, spec *volume.Spec, eventRecorder volume.RecycleEventRecorder, host volume.VolumeHost, volumeConfig volume.VolumeConfig) (volume.Recycler, error) {
@@ -333,7 +311,7 @@ func (r *nfsRecycler) GetPath() string {
 // Recycle recycles/scrubs clean an NFS volume.
 // Recycle blocks until the pod has completed or any error occurs.
 func (r *nfsRecycler) Recycle() error {
-	templateClone, err := conversion.NewCloner().DeepCopy(r.config.RecyclerPodTemplate)
+	templateClone, err := api.Scheme.DeepCopy(r.config.RecyclerPodTemplate)
 	if err != nil {
 		return err
 	}

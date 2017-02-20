@@ -20,11 +20,11 @@ import (
 	"sync"
 
 	"github.com/golang/glog"
-	"k8s.io/kubernetes/pkg/api/unversioned"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/labels"
 	utilnode "k8s.io/kubernetes/pkg/util/node"
-	"k8s.io/kubernetes/pkg/util/workqueue"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm"
 	schedulerapi "k8s.io/kubernetes/plugin/pkg/scheduler/api"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
@@ -71,7 +71,7 @@ func getSelectors(pod *v1.Pod, sl algorithm.ServiceLister, cl algorithm.Controll
 	}
 	if rss, err := rsl.GetPodReplicaSets(pod); err == nil {
 		for _, rs := range rss {
-			if selector, err := unversioned.LabelSelectorAsSelector(rs.Spec.Selector); err == nil {
+			if selector, err := metav1.LabelSelectorAsSelector(rs.Spec.Selector); err == nil {
 				selectors = append(selectors, selector)
 			}
 		}
